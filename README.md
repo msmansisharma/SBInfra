@@ -1,4 +1,4 @@
-This pipeline steps
+This pipeline steps (This is Azure DevOps pipeline)
 - Create RG if not already created otherwise skip
 - Laydown netowrk VNET and SUBNETS
 - Deploy AZCOMP JSON will cover below
