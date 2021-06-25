@@ -1,0 +1,323 @@
+trigger:
+
+- main
+- dev
+
+stages:
+  - stage: Validation_Input
+    jobs:
+    - job: BuildJob
+      steps:
+      - script: echo Some input validation or pester tests should really be here before using this repo!
+
+  - stage: Development
+    condition: and(succeeded(), ne(variables['Build.SourceBranch'], 'refs/heads/main'))
+    dependsOn: Validation_Input
+    jobs:
+    - job:
+    - deployment: Job_Development
+      displayName: Development
+      environment: Development
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+
+            - task: AzureCLI@2
+              displayName: 'Creat/Check Resource group'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                scriptType: 'pscore'
+                scriptLocation: 'inlineScript'
+                inlineScript: 'az group create --location westeurope --resource-group $(resourceGroupNameDev)'
+            - task: AzureCLI@2
+              displayName: 'Create/check network foundation'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                scriptType: 'pscore'
+                scriptLocation: 'scriptPath'
+                scriptPath: '$(System.DefaultWorkingDirectory)/Scripts/networkdeploy.ps1'
+                arguments: '-resourceGroupName $(resourceGroupNameDev) -NSGname $(NSGnamedev) -vnetName $(vnetNamedev) -vnetAdd $(vnetadddev) -subnt1name $(subnt1namedev) -subnt1add $(subnt1adddev) -subnt2name $(subnt2namedev) -subnt2add $(subnt2adddev) -subnt3name $(subnt3namedev) -subnt3add $(subnt3adddev) -subnt4name $(subnt4namedev) -subnt4add $(subnt4adddev)'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+            - task: CopyFiles@2
+              displayName: 'Copy artifcat'
+              inputs:
+                SourceFolder: 'Template'
+                Contents: '**'
+                TargetFolder: '$(build.artifactstagingdirectory)/Template'
+                OverWrite: true
+            - task: PublishBuildArtifacts@1
+              displayName: 'Place artifact in staging'
+              inputs:
+                PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+                ArtifactName: 'drop'
+                publishLocation: 'Container'
+            - task: DownloadSecureFile@1
+              name: secret
+              displayName: 'Download secrets for pipeline'
+              inputs:
+                secureFile: 'secret.csv'
+                retryCount: '2'
+
+            - task: AzureResourceManagerTemplateDeployment@3
+              displayName: 'Deploy Azure components keyvault, automation account,etc'
+              inputs:
+                deploymentScope: 'Resource Group'
+                azureResourceManagerConnection: 'DevOpsServiceConnection'
+                subscriptionId: 'fd0675e3-a4e3-46ea-931a-71764ea4deee'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: 'azureInfraRGDev'
+                location: 'West Europe'
+                templateLocation: 'Linked artifact'
+                csmFile: '$(System.DefaultWorkingDirectory)/Template/azcomp.json'
+                csmParametersFile: '$(System.DefaultWorkingDirectory)/Template/azcomp-dev.parameters.json'
+                deploymentMode: 'Incremental'
+                deploymentName: 'DevDeployment'
+            - task: AzurePowerShell@5
+              displayName: 'Securely copy secrets to key vault'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'InlineScript'
+                Inline: |
+                  $kvname = (Get-AzKeyVault -ResourceGroupName $(resourceGroupNameDev)).VaultName
+                        $secret = import-csv "$(secret.secureFilePath)" | foreach {
+                            $secret = convertto-securestring -string $_.Secret -asplaintext -force
+                            set-azkeyvaultsecret -vaultname $kvname -name $_.Name -secretvalue $secret
+                            }
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+            - task: AzurePowerShell@5
+              displayName: 'Import modules in automation account'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/impportmodulesinAA.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupNameDev)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+            - task: AzurePowerShell@5
+              displayName: 'DSC for DC'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/DscConfDomainController-config.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupNameDev)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+            - task: AzurePowerShell@5
+              displayName: 'DSC for PKI/CA'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/DscConfPKI-ConfigData.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupNameDev)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+            - task: AzureResourceManagerTemplateDeployment@3
+              displayName: 'Deploying VMs for DCs'
+              inputs:
+                deploymentScope: 'Resource Group'
+                azureResourceManagerConnection: 'DevOpsServiceConnection'
+                subscriptionId: 'fd0675e3-a4e3-46ea-931a-71764ea4deee'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: 'azureInfraRGDev'
+                location: 'West Europe'
+                templateLocation: 'Linked artifact'
+                csmFile: '$(System.DefaultWorkingDirectory)/Template/vmdeploy.json'
+                csmParametersFile: '$(System.DefaultWorkingDirectory)/Template/vmdeploy-dev.parameters.json'
+                deploymentMode: 'Incremental'
+                deploymentName: 'DeployingDCVMsDev'
+            - task: AzurePowerShell@5
+              displayName: 'Onboard Primary DC in DSC and wait for finish'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/DCDscconfig.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupNameDev)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+            - task: AzureResourceManagerTemplateDeployment@3
+              displayName: 'Deploying additionalVM PKI & MGMT'
+              inputs:
+                deploymentScope: 'Resource Group'
+                azureResourceManagerConnection: 'DevOpsServiceConnection'
+                subscriptionId: 'fd0675e3-a4e3-46ea-931a-71764ea4deee'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: 'azureInfraRGDev'
+                location: 'West Europe'
+                templateLocation: 'Linked artifact'
+                csmFile: '$(System.DefaultWorkingDirectory)/Template/additionalvm.json'
+                csmParametersFile: '$(System.DefaultWorkingDirectory)/Template/additionalvm-dev.parameters.json'
+                deploymentMode: 'Incremental'
+                deploymentName: 'DeployingAdditionalVMDev'
+            - task: AzurePowerShell@5
+              displayName: 'Onboard PKI in DSC and wait for finish'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/pkidscconfig.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupNameDev)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+
+  - stage: Production
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    dependsOn: Validation_Input
+    jobs:
+    - job:
+    - deployment: Job_Production
+      displayName: Production
+      environment: Production
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+            - checkout: self
+
+            - task: AzureCLI@2
+              displayName: 'Creat/Check Resource group'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                scriptType: 'pscore'
+                scriptLocation: 'inlineScript'
+                inlineScript: 'az group create --location westeurope --resource-group $(resourceGroupName)'
+            - task: DownloadSecureFile@1
+              name: secret
+              displayName: 'Download secrets for pipeline KV'
+              inputs:
+                secureFile: 'secret.csv'
+                retryCount: '2'
+
+
+            - task: AzureCLI@2
+              displayName: 'Create/check network foundation'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                scriptType: 'pscore'
+                scriptLocation: 'scriptPath'
+                scriptPath: '$(System.DefaultWorkingDirectory)/Scripts/networkdeploy.ps1'
+                arguments: '-resourceGroupName $(resourceGroupName) -NSGname $(NSGname) -vnetName $(vnetName) -vnetAdd $(vnetadd) -subnt1name $(subnt1name) -subnt1add $(subnt1add) -subnt2name $(subnt2name) -subnt2add $(subnt2add) -subnt3name $(subnt3name) -subnt3add $(subnt3add) -subnt4name $(subnt4name) -subnt4add $(subnt4add)'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+            - task: CopyFiles@2
+              displayName: 'Copy artifcat'
+              inputs:
+                SourceFolder: 'Template'
+                Contents: '**'
+                TargetFolder: '$(build.artifactstagingdirectory)/Template'
+                OverWrite: true
+            - task: PublishBuildArtifacts@1
+              displayName: 'Place artifact in staging'
+              inputs:
+                PathtoPublish: '$(Build.ArtifactStagingDirectory)'
+                ArtifactName: 'drop'
+                publishLocation: 'Container'
+
+
+            - task: AzureResourceManagerTemplateDeployment@3
+              displayName: 'Deploy Azure components keyvault, automation account,etc'
+              inputs:
+                deploymentScope: 'Resource Group'
+                azureResourceManagerConnection: 'DevOpsServiceConnection'
+                subscriptionId: 'fd0675e3-a4e3-46ea-931a-71764ea4deee'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: 'azureInfraRG'
+                location: 'West Europe'
+                templateLocation: 'Linked artifact'
+                csmFile: '$(System.DefaultWorkingDirectory)/Template/azcomp.json'
+                csmParametersFile: '$(System.DefaultWorkingDirectory)/Template/azcomp.parameters.json'
+                deploymentMode: 'Incremental'
+                deploymentName: 'ProdDeployment'
+            - task: AzurePowerShell@5
+              displayName: 'Securely creds to KV'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'InlineScript'
+                Inline: |
+                  $kvname = (Get-AzKeyVault -ResourceGroupName $(resourceGroupName)).VaultName
+                        $secret = import-csv "$(secret.secureFilePath)" | ForEach-Object {
+                            $secret = convertto-securestring -string $_.Secret -asplaintext -force
+                            set-azkeyvaultsecret -vaultname $kvname -name $_.Name -secretvalue $secret
+                            }
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+            - task: AzurePowerShell@5
+              displayName: 'Import modules in automation account'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/impportmodulesinAA.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupName)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+            - task: AzurePowerShell@5
+              displayName: 'DSC configuration for DC'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/DscConfDomainController-config.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupName)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+            - task: AzurePowerShell@5
+              displayName: 'DSC configuration for PKI/CA'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/DscConfPKI-ConfigData.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupName)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+            - task: AzureResourceManagerTemplateDeployment@3
+              displayName: 'Deploying VMs for DCs'
+              inputs:
+                deploymentScope: 'Resource Group'
+                azureResourceManagerConnection: 'DevOpsServiceConnection'
+                subscriptionId: 'fd0675e3-a4e3-46ea-931a-71764ea4deee'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: 'azureInfraRG'
+                location: 'West Europe'
+                templateLocation: 'Linked artifact'
+                csmFile: '$(System.DefaultWorkingDirectory)/Template/vmdeploy.json'
+                csmParametersFile: '$(System.DefaultWorkingDirectory)/Template/vmdeploy.parameters.json'
+                deploymentMode: 'Incremental'
+                deploymentName: 'DeployingDCVMs'
+            - task: AzurePowerShell@5
+              displayName: 'Onboard Primary DC in DSC and wait for finish'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/DCDscconfig.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupName)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
+            - task: AzureResourceManagerTemplateDeployment@3
+              displayName: 'Deploying additionalVM PKI & MGMT'
+              inputs:
+                deploymentScope: 'Resource Group'
+                azureResourceManagerConnection: 'DevOpsServiceConnection'
+                subscriptionId: 'fd0675e3-a4e3-46ea-931a-71764ea4deee'
+                action: 'Create Or Update Resource Group'
+                resourceGroupName: 'azureInfraRG'
+                location: 'West Europe'
+                templateLocation: 'Linked artifact'
+                csmFile: '$(System.DefaultWorkingDirectory)/Template/additionalvm.json'
+                csmParametersFile: '$(System.DefaultWorkingDirectory)/Template/additionalvm.parameters.json'
+                deploymentMode: 'Incremental'
+                deploymentName: 'DeployingAdditionalVM'
+            - task: AzurePowerShell@5
+              displayName: 'Onboard PKI in DSC and wait for finish'
+              inputs:
+                azureSubscription: 'DevOpsServiceConnection'
+                ScriptType: 'FilePath'
+                ScriptPath: '$(System.DefaultWorkingDirectory)/Scripts/pkidscconfig.ps1'
+                ScriptArguments: '-resourceGroupName $(resourceGroupName)'
+                azurePowerShellVersion: 'LatestVersion'
+                workingDirectory: '$(System.DefaultWorkingDirectory)'
