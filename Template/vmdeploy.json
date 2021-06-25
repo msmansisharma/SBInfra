@@ -1,0 +1,403 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "existingVNETName": {
+        "type": "string",
+        "metadata": {
+          "description": "Existing VNET name"
+        }
+      },
+      "AvailSetName": {
+        "type": "string",
+        "metadata": {
+          "description": "Name of availibility set to be created for hosting DC's"
+        }
+      },
+      "existingDCSubnetName": {
+        "type": "string",
+        "metadata": {
+          "description": "Existing DC subnet name"
+        }
+      },
+        "existingRODCSubnetName": {
+        "type": "string",
+        "metadata": {
+          "description": "Existing RODC subnet name"
+        }
+      },
+
+      "existingVNETRG": {
+        "type": "string",
+        "metadata": {
+          "description": "Resource group name"
+        }
+      },
+      "dnsDCLabelPrefix": {
+        "type": "string",
+        "metadata": {
+          "description": "Name of DC VM's as prefix"
+        }
+      },
+       "dnsRODCLabelPrefix": {
+        "type": "string",
+        "metadata": {
+          "description": "Name of RODC VM's as prefix"
+        }
+      },
+      "vmSize": {
+        "type": "string",
+        "metadata": {
+          "description": "The size of the virtual machines"
+        }
+      },
+     "disk-key-encryption-key-url": {
+        "type": "string"
+     },
+      "storageAccountName": {
+        "type": "string",
+        "metadata": {
+          "description": "Storage account name in lower case and between 3-24 chars"
+        }
+      },
+            "vmAdminUsername": {
+        "type": "string",
+        "metadata": {
+          "description": "Azure VM admin username"
+        }
+      },
+      "vmAdminPassword": {
+        "type": "securestring",
+        "metadata": {
+          "description": "Azure VM password referenced from keyvault"
+        }
+      },
+      "location": {
+        "type": "string",
+        "defaultValue": "[resourceGroup().location]",
+        "metadata": {
+          "description": "Location for all resources."
+        }
+      },
+      "disk-encryption-type": {
+        "type": "string",
+        "metadata": {      
+          "description": "Disk Encryption with Customer Managed Key (CMK), choose whether the disk should be encrypted with SSE + CMK or ADE + CMK"
+        },
+        "defaultValue": "ADE",
+        "allowedValues": [
+          "SSE",
+          "ADE"
+        ]          
+      },
+
+      "key-vault-name": {
+        "type": "string",
+        "defaultValue": "kv-diskency-danish",
+        "metadata": {
+          "description": "Name of keyvault"
+        }
+      },
+    "numberOfDCInstances": {
+      "type": "int",
+      "defaultValue": 2,
+      "metadata": {
+        "description": "Number of DC VM instances to create, default is 2"
+      }
+    },
+      "numberOfRODCInstances": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Number of RODC VM instances to create, default is 1"
+      }
+    },
+      "utcValue": {
+          "type": "string",
+          "defaultValue": "[utcNow()]"
+      }
+ 
+    },
+    "variables": {
+
+      "imagePublisher": "MicrosoftWindowsServer",
+      "imageOffer": "WindowsServer",
+      "windowsDiskEncryptionExtensionVersion": "2.2",
+      "windowsOSVersion": "2019-Datacenter",
+      "windowsEncryptionOperation": "EnableEncryption",
+      "windowsKeyEncryptionAlgorithm": "RSA-OAEP",
+      "windowsDiskEncryptionExtensionName": "AzureDiskEncryption",
+      "nicDCName": "[concat(parameters('dnsDCLabelPrefix'),'Nic')]",
+      "nicRODCName": "[concat(parameters('dnsRODCLabelPrefix'),'Nic')]",
+      "subnetDCId": "[resourceId(parameters('existingVNETRG'), 'Microsoft.Network/virtualNetworks/subnets', parameters('existingVNETName'), parameters('existingDCSubnetName'))]",
+      "subnetRODCId": "[resourceId(parameters('existingVNETRG'), 'Microsoft.Network/virtualNetworks/subnets', parameters('existingVNETName'), parameters('existingRODCSubnetName'))]"
+    },
+    "resources": [
+    {
+      "name": "[parameters('AvailSetName')]",
+      "type": "Microsoft.Compute/availabilitySets",
+      "apiVersion": "2021-03-01",
+      "location": "[resourceGroup().location]",
+        "sku": {
+         "name": "Aligned"
+               },
+      "properties": {
+        "platformUpdateDomainCount": 5,
+        "platformFaultDomainCount": 2
+      }
+    },
+
+
+       {
+        "apiVersion": "2017-10-01",
+        "type": "Microsoft.Storage/storageAccounts",
+        "name": "[parameters('storageAccountName')]",
+        "location": "[parameters('location')]",
+         "sku": {
+             "name": "Standard_LRS",
+             "tier": "Standard"
+            },
+         "kind": "StorageV2",
+        "properties": {
+          "accountType": "Standard_LRS"
+        }
+      },
+    
+      {
+        "condition": "[greater(parameters('numberOfDCInstances'),0)]",
+        "apiVersion": "2015-06-15",
+        "type": "Microsoft.Network/networkInterfaces",
+        "name": "[concat(variables('nicDCName'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "copy": {
+            "name": "nicDCLoop",
+            "count": "[parameters('numberOfDCInstances')]"
+                },
+        "properties": {
+          "ipConfigurations": [
+            {
+              "name": "ipconfig",
+              "properties": {
+                "privateIPAllocationMethod": "Dynamic",
+                "subnet": {
+                  "id": "[variables('subnetDCId')]"
+                }
+              }
+            }
+          ]
+        }
+      },
+
+      {
+        "condition": "[greater(parameters('numberOfRODCInstances'),0)]",
+        "apiVersion": "2015-06-15",
+        "type": "Microsoft.Network/networkInterfaces",
+        "name": "[concat(variables('nicRODCName'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "copy": {
+            "name": "nicRODCLoop",
+            "count": "[parameters('numberOfRODCInstances')]"
+                },
+        "properties": {
+          "ipConfigurations": [
+            {
+              "name": "ipconfig",
+              "properties": {
+                "privateIPAllocationMethod": "Dynamic",
+                "subnet": {
+                  "id": "[variables('subnetRODCId')]"
+                }
+              }
+            }
+          ]
+        }
+      },
+
+      {
+        "condition": "[greater(parameters('numberOfDCInstances'),0)]",
+        "apiVersion": "2017-03-30",
+        "type": "Microsoft.Compute/virtualMachines",
+        "name": "[concat(parameters('dnsDCLabelPrefix'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "dependsOn": ["nicDCLoop"],
+        "copy": {
+        "name": "vmDCLoop",
+        "count": "[parameters('numberOfDCInstances')]"
+      },
+        
+        "properties": {
+          "hardwareProfile": {
+            "vmSize": "[parameters('vmSize')]"
+          },
+          "osProfile": {
+            "computerName": "[concat(parameters('dnsDCLabelPrefix'),copyIndex())]",
+            "adminUsername": "[parameters('vmAdminUsername')]",
+            "adminPassword": "[parameters('vmAdminPassword')]"
+          },
+          "storageProfile": {
+            "imageReference": {
+              "publisher": "[variables('imagePublisher')]",
+              "offer": "[variables('imageOffer')]",
+              "sku": "[variables('windowsOSVersion')]",
+              "version": "latest"
+            },
+            "osDisk": {
+              "name": "[concat(parameters('dnsDCLabelPrefix'),copyIndex(),'_OsDisk')]",
+              "caching": "ReadWrite",
+              "createOption": "FromImage"
+            },
+            "dataDisks": [
+              {
+                "name": "[concat(parameters('dnsDCLabelPrefix'),copyIndex(),'_dataDisk1')]",
+                "caching": "None",
+                "createOption": "Empty",
+                "diskSizeGB": "10",
+                "lun": 0
+              }
+            ]
+          },
+          "networkProfile": {
+            "networkInterfaces": [
+              {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('nicDCName'), copyIndex()))]"
+              }
+            ]
+          },
+          "diagnosticsProfile": {
+            "bootDiagnostics": {
+              "enabled": true,
+              "storageUri": "[reference(concat('Microsoft.Storage/storageAccounts/', parameters('storageAccountName')), '2015-06-15').primaryEndpoints.blob]"
+            }
+          },
+            "availabilitySet": {
+      "id": "[resourceId('Microsoft.Compute/availabilitySets',parameters('AvailSetName')) ]"
+                }
+        }
+      },
+            {
+        "condition": "[greater(parameters('numberOfRODCInstances'),0)]",
+        "apiVersion": "2017-03-30",
+        "type": "Microsoft.Compute/virtualMachines",
+        "name": "[concat(parameters('dnsRODCLabelPrefix'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "dependsOn": ["nicRODCLoop"],
+        "copy": {
+        "name": "vmRODCLoop",
+        "count": "[parameters('numberOfRODCInstances')]"
+      },
+        
+        "properties": {
+          "hardwareProfile": {
+            "vmSize": "[parameters('vmSize')]"
+          },
+          "osProfile": {
+            "computerName": "[concat(parameters('dnsRODCLabelPrefix'),copyIndex())]",
+            "adminUsername": "[parameters('vmAdminUsername')]",
+            "adminPassword": "[parameters('vmAdminPassword')]"
+          },
+          "storageProfile": {
+            "imageReference": {
+              "publisher": "[variables('imagePublisher')]",
+              "offer": "[variables('imageOffer')]",
+              "sku": "[variables('windowsOSVersion')]",
+              "version": "latest"
+            },
+            "osDisk": {
+              "name": "[concat(parameters('dnsRODCLabelPrefix'),copyIndex(),'_OsDisk')]",
+              "caching": "ReadWrite",
+              "createOption": "FromImage"
+            },
+            "dataDisks": [
+              {
+                "name": "[concat(parameters('dnsRODCLabelPrefix'),copyIndex(),'_dataDisk1')]",
+                "caching": "None",
+                "createOption": "Empty",
+                "diskSizeGB": "10",
+                "lun": 0
+              }
+            ]
+          },
+          "networkProfile": {
+            "networkInterfaces": [
+              {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('nicRODCName'), copyIndex()))]"
+              }
+            ]
+          },
+          "diagnosticsProfile": {
+            "bootDiagnostics": {
+              "enabled": true,
+              "storageUri": "[reference(concat('Microsoft.Storage/storageAccounts/', parameters('storageAccountName')), '2015-06-15').primaryEndpoints.blob]"
+            }
+          }
+        }
+      },
+
+        {
+                "condition": "[and(greater(parameters('numberOfDCInstances'),0),bool(equals(parameters('disk-encryption-type'), 'ADE')))]",
+                "type": "Microsoft.Compute/virtualMachines/extensions",
+                "name": "[concat('/', parameters('dnsDCLabelPrefix'),copyIndex(), '/', variables('windowsDiskEncryptionExtensionName'))]",
+                "location": "[resourceGroup().location]",
+                "dependsOn": ["vmDCLoop"],
+                      "copy": {
+                              "name": "ExtDCLoop",
+                              "count": "[parameters('numberOfDCInstances')]"
+                            },
+                "apiVersion": "2019-07-01",
+                "properties": {
+                    "publisher": "Microsoft.Azure.Security",
+                    "type": "[variables('windowsDiskEncryptionExtensionName')]",
+                    "typeHandlerVersion": "[variables('windowsDiskEncryptionExtensionVersion')]",
+                    "autoUpgradeMinorVersion": true,
+                    "forceUpdateTag": "[parameters('utcValue')]",
+                    "settings": {
+                        "EncryptionOperation": "[variables('windowsEncryptionOperation')]",
+                        "KeyVaultURL": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('key-vault-name')), '2019-09-01').vaultUri]",
+                        "KeyVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionKeyURL":"[parameters('disk-key-encryption-key-url')]",
+                        "KekVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionAlgorithm": "[variables('windowsKeyEncryptionAlgorithm')]",
+                        "VolumeType": "All",
+                        "ResizeOSDisk": false
+                    }
+                }
+              },
+
+        {
+                "condition": "[and(greater(parameters('numberOfRODCInstances'),0),bool(equals(parameters('disk-encryption-type'), 'ADE')))]",
+                "type": "Microsoft.Compute/virtualMachines/extensions",
+                "name": "[concat('/', parameters('dnsRODCLabelPrefix'),copyIndex(), '/', variables('windowsDiskEncryptionExtensionName'))]",
+                "location": "[resourceGroup().location]",
+                "dependsOn": ["vmRODCLoop"],
+                      "copy": {
+                              "name": "ExtRODCLoop",
+                              "count": "[parameters('numberOfRODCInstances')]"
+                            },
+                "apiVersion": "2019-07-01",
+                "properties": {
+                    "publisher": "Microsoft.Azure.Security",
+                    "type": "[variables('windowsDiskEncryptionExtensionName')]",
+                    "typeHandlerVersion": "[variables('windowsDiskEncryptionExtensionVersion')]",
+                    "autoUpgradeMinorVersion": true,
+                    "forceUpdateTag": "[parameters('utcValue')]",
+                    "settings": {
+                        "EncryptionOperation": "[variables('windowsEncryptionOperation')]",
+                        "KeyVaultURL": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('key-vault-name')), '2019-09-01').vaultUri]",
+                        "KeyVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionKeyURL":"[parameters('disk-key-encryption-key-url')]",
+                        "KekVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionAlgorithm": "[variables('windowsKeyEncryptionAlgorithm')]",
+                        "VolumeType": "All",
+                        "ResizeOSDisk": false
+                    }
+                }
+              }     
+
+
+
+
+
+              
+                   
+    ]
+  }

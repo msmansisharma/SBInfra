@@ -1,0 +1,470 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "existingVNETName": {
+        "type": "string",
+        "metadata": {
+          "description": "Existing VNET Name"
+        }
+      },
+       "storageAccountName": {
+        "type": "string",
+        "metadata": {
+          "description": "Storage account name must be all lower case and between 3-24 chars"
+        }
+      },
+            "domainToJoin": {
+        "type": "string",
+        "metadata": {
+          "description": "The FQDN of the AD domain"
+        }
+      },
+            "domainUsername": {
+        "type": "string",
+        "metadata": {
+          "description": "Username of the account on the domain"
+        }
+      },
+            "domainPassword": {
+        "type": "securestring",
+        "metadata": {
+          "description": "Password of the account on the domain referred in KeyVault"
+        }
+      },
+            "domainJoinOptions": {
+        "type": "int",
+        "defaultValue": 3,
+        "metadata": {
+          "description": "Set of bit flags that define the join options. Default value of 3 is a combination of NETSETUP_JOIN_DOMAIN (0x00000001) & NETSETUP_ACCT_CREATE (0x00000002) i.e. will join the domain and create the account on the domain. For more information see https://msdn.microsoft.com/en-us/library/aa392154(v=vs.85).aspx"
+        }
+      },
+      "ouPath": {
+        "type": "string",
+        "defaultValue": "",
+        "metadata": {
+          "description": "Specifies an organizational unit (OU) for the domain account. Enter the full distinguished name of the OU in quotation marks. Example: \"OU=testOU; DC=domain; DC=Domain; DC=com\""
+        }
+      },
+      "existingCASubnetName": {
+        "type": "string",
+        "metadata": {
+          "description": "Subnet dedicated for PKI/CA servers"
+        }
+      },
+        "existingMGMTSubnetName": {
+        "type": "string",
+        "metadata": {
+          "description": "Subnet dedicated for MGMT servers"
+        }
+      },
+
+      "existingVNETRG": {
+        "type": "string",
+        "metadata": {
+          "description": "EResource group name"
+        }
+      },
+      "dnsPKILabelPrefix": {
+        "type": "string",
+        "metadata": {
+          "description": "PKI/CA VM DNS label prefix"
+        }
+      },
+       "dnsMGMTLabelPrefix": {
+        "type": "string",
+        "metadata": {
+          "description": "MGMT VM DNS Label prefix"
+        }
+      },
+      "vmSize": {
+        "type": "string",
+        "metadata": {
+          "description": "The size of the virtual machines"
+        }
+      },
+     "disk-key-encryption-key-url": {
+        "type": "string"
+     },
+      "vmAdminUsername": {
+        "type": "string",
+        "metadata": {
+          "description": "VM creation username or admin name"
+        }
+      },
+      "vmAdminPassword": {
+        "type": "securestring",
+        "metadata": {
+          "description": "Azure VM password from keyvault reference"
+        }
+      },
+      "location": {
+        "type": "string",
+        "defaultValue": "[resourceGroup().location]",
+        "metadata": {
+          "description": "Location for all resources."
+        }
+      },
+      "disk-encryption-type": {
+        "type": "string",
+        "metadata": {      
+          "description": "Disk Encryption with Customer Managed Key (CMK), choose whether the disk should be encrypted with SSE + CMK or ADE + CMK"
+        },
+        "defaultValue": "ADE",
+        "allowedValues": [
+          "SSE",
+          "ADE"
+        ]          
+      },
+
+      "key-vault-name": {
+        "type": "string",
+        "defaultValue": "mykevault-dansb",
+        "metadata": {
+          "description": "Specifies the name of the key vault."
+        }
+      },
+    "numberOfCAInstances": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Number of CA/PKI VM instances to create, default is 1"
+      }
+    },
+      "numberOfMGMTInstances": {
+      "type": "int",
+      "defaultValue": 1,
+      "metadata": {
+        "description": "Number of MGMT VM instances to create, default is 1"
+      }
+    },
+      "utcValue": {
+          "type": "string",
+          "defaultValue": "[utcNow()]"
+      }
+ 
+    },
+    "variables": {
+
+
+      "imagePublisher": "MicrosoftWindowsServer",
+      "imageOffer": "WindowsServer",
+      "windowsDiskEncryptionExtensionVersion": "2.2",
+      "windowsOSVersion": "2019-Datacenter",
+      "windowsEncryptionOperation": "EnableEncryption",
+      "windowsKeyEncryptionAlgorithm": "RSA-OAEP",
+      "windowsDiskEncryptionExtensionName": "AzureDiskEncryption",
+      "nicPKIName": "[concat(parameters('dnsPKILabelPrefix'),'Nic')]",
+      "nicMGMTName": "[concat(parameters('dnsMGMTLabelPrefix'),'Nic')]",
+      "subnetPKIId": "[resourceId(parameters('existingVNETRG'), 'Microsoft.Network/virtualNetworks/subnets', parameters('existingVNETName'), parameters('existingCASubnetName'))]",
+      "subnetMGMTId": "[resourceId(parameters('existingVNETRG'), 'Microsoft.Network/virtualNetworks/subnets', parameters('existingVNETName'), parameters('existingMGMTSubnetName'))]"
+    },
+    "resources": [
+    
+       {
+        "apiVersion": "2017-10-01",
+        "type": "Microsoft.Storage/storageAccounts",
+        "name": "[parameters('storageAccountName')]",
+        "location": "[parameters('location')]",
+         "sku": {
+             "name": "Standard_LRS",
+             "tier": "Standard"
+            },
+         "kind": "StorageV2",
+        "properties": {
+          "accountType": "Standard_LRS"
+        }
+      },
+    
+      {
+        "condition": "[greater(parameters('numberOfCAInstances'),0)]",
+        "apiVersion": "2015-06-15",
+        "type": "Microsoft.Network/networkInterfaces",
+        "name": "[concat(variables('nicPKIName'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "copy": {
+            "name": "nicPKILoop",
+            "count": "[parameters('numberOfCAInstances')]"
+                },
+        "properties": {
+          "ipConfigurations": [
+            {
+              "name": "ipconfig",
+              "properties": {
+                "privateIPAllocationMethod": "Dynamic",
+                "subnet": {
+                  "id": "[variables('subnetPKIId')]"
+                }
+              }
+            }
+          ]
+        }
+      },
+
+      {
+        "condition": "[greater(parameters('numberOfMGMTInstances'),0)]",
+        "apiVersion": "2015-06-15",
+        "type": "Microsoft.Network/networkInterfaces",
+        "name": "[concat(variables('nicMGMTName'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "copy": {
+            "name": "nicMGMTLoop",
+            "count": "[parameters('numberOfMGMTInstances')]"
+                },
+        "properties": {
+          "ipConfigurations": [
+            {
+              "name": "ipconfig",
+              "properties": {
+                "privateIPAllocationMethod": "Dynamic",
+                "subnet": {
+                  "id": "[variables('subnetMGMTId')]"
+                }
+              }
+            }
+          ]
+        }
+      },
+
+      {
+        "condition": "[greater(parameters('numberOfCAInstances'),0)]",
+        "apiVersion": "2017-03-30",
+        "type": "Microsoft.Compute/virtualMachines",
+        "name": "[concat(parameters('dnsPKILabelPrefix'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "dependsOn": ["nicPKILoop"],
+        "copy": {
+        "name": "vmPKILoop",
+        "count": "[parameters('numberOfCAInstances')]"
+      },
+        
+        "properties": {
+          "hardwareProfile": {
+            "vmSize": "[parameters('vmSize')]"
+          },
+          "osProfile": {
+            "computerName": "[concat(parameters('dnsPKILabelPrefix'),copyIndex())]",
+            "adminUsername": "[parameters('vmAdminUsername')]",
+            "adminPassword": "[parameters('vmAdminPassword')]"
+          },
+          "storageProfile": {
+            "imageReference": {
+              "publisher": "[variables('imagePublisher')]",
+              "offer": "[variables('imageOffer')]",
+              "sku": "[variables('windowsOSVersion')]",
+              "version": "latest"
+            },
+            "osDisk": {
+              "name": "[concat(parameters('dnsPKILabelPrefix'),copyIndex(),'_OsDisk')]",
+              "caching": "ReadWrite",
+              "createOption": "FromImage"
+            },
+            "dataDisks": [
+              {
+                "name": "[concat(parameters('dnsPKILabelPrefix'),copyIndex(),'_dataDisk1')]",
+                "caching": "None",
+                "createOption": "Empty",
+                "diskSizeGB": "10",
+                "lun": 0
+              }
+            ]
+          },
+          "networkProfile": {
+            "networkInterfaces": [
+              {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('nicPKIName'), copyIndex()))]"
+              }
+            ]
+          },
+          "diagnosticsProfile": {
+            "bootDiagnostics": {
+              "enabled": true,
+              "storageUri": "[reference(concat('Microsoft.Storage/storageAccounts/', parameters('storageAccountName')), '2015-06-15').primaryEndpoints.blob]"
+            }
+          }
+        }
+      },
+            {
+        "condition": "[greater(parameters('numberOfMGMTInstances'),0)]",
+        "apiVersion": "2017-03-30",
+        "type": "Microsoft.Compute/virtualMachines",
+        "name": "[concat(parameters('dnsMGMTLabelPrefix'),copyIndex())]",
+        "location": "[parameters('location')]",
+        "dependsOn": ["nicMGMTLoop"],
+        "copy": {
+        "name": "vmMGMTLoop",
+        "count": "[parameters('numberOfMGMTInstances')]"
+      },
+        
+        "properties": {
+          "hardwareProfile": {
+            "vmSize": "[parameters('vmSize')]"
+          },
+          "osProfile": {
+            "computerName": "[concat(parameters('dnsMGMTLabelPrefix'),copyIndex())]",
+            "adminUsername": "[parameters('vmAdminUsername')]",
+            "adminPassword": "[parameters('vmAdminPassword')]"
+          },
+          "storageProfile": {
+            "imageReference": {
+              "publisher": "[variables('imagePublisher')]",
+              "offer": "[variables('imageOffer')]",
+              "sku": "[variables('windowsOSVersion')]",
+              "version": "latest"
+            },
+            "osDisk": {
+              "name": "[concat(parameters('dnsMGMTLabelPrefix'),copyIndex(),'_OsDisk')]",
+              "caching": "ReadWrite",
+              "createOption": "FromImage"
+            },
+            "dataDisks": [
+              {
+                "name": "[concat(parameters('dnsMGMTLabelPrefix'),copyIndex(),'_dataDisk1')]",
+                "caching": "None",
+                "createOption": "Empty",
+                "diskSizeGB": "10",
+                "lun": 0
+              }
+            ]
+          },
+          "networkProfile": {
+            "networkInterfaces": [
+              {
+                "id": "[resourceId('Microsoft.Network/networkInterfaces',concat(variables('nicMGMTName'), copyIndex()))]"
+              }
+            ]
+          },
+          "diagnosticsProfile": {
+            "bootDiagnostics": {
+              "enabled": true,
+              "storageUri": "[reference(concat('Microsoft.Storage/storageAccounts/', parameters('storageAccountName')), '2015-06-15').primaryEndpoints.blob]"
+            }
+          }
+        }
+      },
+
+        {
+                "condition": "[and(greater(parameters('numberOfCAInstances'),0),bool(equals(parameters('disk-encryption-type'), 'ADE')))]",
+                "type": "Microsoft.Compute/virtualMachines/extensions",
+                "name": "[concat('/', parameters('dnsPKILabelPrefix'),copyIndex(), '/', variables('windowsDiskEncryptionExtensionName'))]",
+                "location": "[resourceGroup().location]",
+                "dependsOn": ["vmPKILoop"],
+                      "copy": {
+                              "name": "ExtCALoop",
+                              "count": "[parameters('numberOfCAInstances')]"
+                            },
+                "apiVersion": "2019-07-01",
+                "properties": {
+                    "publisher": "Microsoft.Azure.Security",
+                    "type": "[variables('windowsDiskEncryptionExtensionName')]",
+                    "typeHandlerVersion": "[variables('windowsDiskEncryptionExtensionVersion')]",
+                    "autoUpgradeMinorVersion": true,
+                    "forceUpdateTag": "[parameters('utcValue')]",
+                    "settings": {
+                        "EncryptionOperation": "[variables('windowsEncryptionOperation')]",
+                        "KeyVaultURL": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('key-vault-name')), '2019-09-01').vaultUri]",
+                        "KeyVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionKeyURL":"[parameters('disk-key-encryption-key-url')]",
+                        "KekVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionAlgorithm": "[variables('windowsKeyEncryptionAlgorithm')]",
+                        "VolumeType": "All",
+                        "ResizeOSDisk": false
+                    }
+                }
+              },
+
+        {
+                "condition": "[and(greater(parameters('numberOfMGMTInstances'),0),bool(equals(parameters('disk-encryption-type'), 'ADE')))]",
+                "type": "Microsoft.Compute/virtualMachines/extensions",
+                "name": "[concat('/', parameters('dnsMGMTLabelPrefix'),copyIndex(), '/', variables('windowsDiskEncryptionExtensionName'))]",
+                "location": "[resourceGroup().location]",
+                "dependsOn": ["vmMGMTLoop"],
+                      "copy": {
+                              "name": "ExtMGMTLoop",
+                              "count": "[parameters('numberOfMGMTInstances')]"
+                            },
+                "apiVersion": "2019-07-01",
+                "properties": {
+                    "publisher": "Microsoft.Azure.Security",
+                    "type": "[variables('windowsDiskEncryptionExtensionName')]",
+                    "typeHandlerVersion": "[variables('windowsDiskEncryptionExtensionVersion')]",
+                    "autoUpgradeMinorVersion": true,
+                    "forceUpdateTag": "[parameters('utcValue')]",
+                    "settings": {
+                        "EncryptionOperation": "[variables('windowsEncryptionOperation')]",
+                        "KeyVaultURL": "[reference(resourceId('Microsoft.KeyVault/vaults', parameters('key-vault-name')), '2019-09-01').vaultUri]",
+                        "KeyVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionKeyURL":"[parameters('disk-key-encryption-key-url')]",
+                        "KekVaultResourceId": "[concat(subscription().id,'/resourceGroups/',parameters('existingVNETRG'),'/providers/Microsoft.KeyVault/vaults/', parameters('key-vault-name'))]",
+                        "KeyEncryptionAlgorithm": "[variables('windowsKeyEncryptionAlgorithm')]",
+                        "VolumeType": "All",
+                        "ResizeOSDisk": false
+                    }
+                }
+              },
+
+
+              {
+        "condition": "[greater(parameters('numberOfCAInstances'),0)]",
+        "apiVersion": "2015-06-15",
+        "type": "Microsoft.Compute/virtualMachines/extensions",
+        "name": "[concat(parameters('dnsPKILabelPrefix'),copyIndex(),'/joindomain')]",
+        "location": "[parameters('location')]",
+        "dependsOn": ["ExtCALoop"],
+        "copy": {
+        "name": "vmCADJLoop",
+        "count": "[parameters('numberOfCAInstances')]"
+      },
+        "properties": {
+          "publisher": "Microsoft.Compute",
+          "type": "JsonADDomainExtension",
+          "typeHandlerVersion": "1.3",
+          "autoUpgradeMinorVersion": true,
+          "settings": {
+            "Name": "[parameters('domainToJoin')]",
+            "OUPath": "[parameters('ouPath')]",
+            "User": "[concat(parameters('domainToJoin'), '\\', parameters('domainUsername'))]",
+            "Restart": "true",
+            "Options": "[parameters('domainJoinOptions')]"
+          },
+          "protectedSettings": {
+            "Password": "[parameters('domainPassword')]"
+          }
+        }
+      },  
+
+
+             {
+        "condition": "[greater(parameters('numberOfMGMTInstances'),0)]",
+        "apiVersion": "2015-06-15",
+        "type": "Microsoft.Compute/virtualMachines/extensions",
+        "name": "[concat(parameters('dnsMGMTLabelPrefix'),copyIndex(),'/joindomain')]",
+        "location": "[parameters('location')]",
+        "dependsOn": ["ExtMGMTLoop"],
+        "copy": {
+        "name": "vmMGMTDJLoop",
+        "count": "[parameters('numberOfMGMTInstances')]"
+      },
+        "properties": {
+          "publisher": "Microsoft.Compute",
+          "type": "JsonADDomainExtension",
+          "typeHandlerVersion": "1.3",
+          "autoUpgradeMinorVersion": true,
+          "settings": {
+            "Name": "[parameters('domainToJoin')]",
+            "OUPath": "[parameters('ouPath')]",
+            "User": "[concat(parameters('domainToJoin'), '\\', parameters('domainUsername'))]",
+            "Restart": "true",
+            "Options": "[parameters('domainJoinOptions')]"
+          },
+          "protectedSettings": {
+            "Password": "[parameters('domainPassword')]"
+          }
+        }
+      }   
+
+
+              
+                   
+    ]
+  }

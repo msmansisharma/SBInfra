@@ -1,0 +1,69 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+      "existingVNETName": {
+        "value": "Azure-Vnet-SB"
+      },
+      "existingDCSubnetName": {
+        "value": "SubnetSB-DC-DEV"
+      },
+      "storageAccountName": {
+        "value": "azstoragesandboxdandev"
+      },
+      "existingRODCSubnetName": {
+        "value": "SubnetSB-RODC-DEV"
+      },
+      "existingVNETRG":{
+          "value": "azureInfraRGDev"
+      },
+      "vmSize": {
+          "value": "Standard_D2s_v3"
+        },
+        "dnsDCLabelPrefix": {
+          "value": "VMSBDCDEV"
+        },
+        "dnsRODCLabelPrefix": {
+          "value": "VMSBRODCDEV"
+        },
+  
+      "disk-key-encryption-key-url": {
+        "reference": {
+          "keyVault": {
+            "id": "/subscriptions/fd0675e3-a4e3-46ea-931a-71764ea4deee/resourceGroups/azureinfraRGDev/providers/Microsoft.KeyVault/vaults/keyvault-danSBKV-12-Dev"
+          },
+          "secretName": "az-disk-key-kek-kid"
+          
+        }
+      },
+      "AvailSetName": {
+        "value": "SB-AS-DEV"
+      },
+      "vmAdminUsername": {
+        "value": "domainadmin"
+      },
+      "vmAdminPassword": {
+          "reference": {
+              "keyVault": {
+                "id": "/subscriptions/fd0675e3-a4e3-46ea-931a-71764ea4deee/resourceGroups/azureinfraRGDev/providers/Microsoft.KeyVault/vaults/keyvault-danSBKV-12-Dev"
+              },
+              "secretName": "vmadmin"
+            }
+        },
+      "disk-encryption-type": {
+        "value": "ADE"
+    },
+    "key-vault-name": {
+      "value": "keyvault-danSBKV-12-Dev"
+  },
+  "numberOfDCInstances": {
+    "value": 2
+  },
+  "numberOfRODCInstances": {
+    "value": 1
+  },
+      "location": {
+          "value": "WestEurope"
+      }
+    }
+  }

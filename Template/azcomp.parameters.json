@@ -1,0 +1,28 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "key-vault-name": {
+            "value": "keyvault-danSBKV-11" 
+        },
+        "objectId": {
+            "value": "1ac314b2-6f72-4a66-a25f-f163606950c8"
+        },
+        "uobjectId": {
+            "value": "59b8b91c-4184-46f7-b1b5-dab1bc7c1b19"
+        },
+        "identityName": {
+            "value": "AzureSubscription-Dan-Az-Sandbox"
+        },
+
+        "logAnalyticsWorkspace": {
+            "value": "danloganalyticswssb" 
+        },
+        "automationaccount": {
+            "value": "dan-aa-sb" 
+        },
+        "storageaccountname": {
+            "value": "azstoragesandboxdan"
+        }
+    }
+}

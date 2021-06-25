@@ -1,0 +1,89 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "existingVNETName": {
+      "value": "Azure-Vnet-SB"
+    },
+    "existingMGMTSubnetName": {
+      "value": "SubnetSB-MGMT-DEV"
+    },
+    "existingCASubnetName": {
+      "value": "SubnetSB-CA-DEV"
+    },
+    "storageAccountName": {
+        "value": "azstoragesandboxdandev"
+      },
+    "existingVNETRG":{
+        "value": "azureInfraRGDev"
+    },
+    "vmSize": {
+        "value": "Standard_D2s_v3"
+      },
+      "dnsPKILabelPrefix": {
+        "value": "VMSBPKI"
+      },
+      "dnsMGMTLabelPrefix": {
+        "value": "VMSBMGMT"
+      },
+
+    "disk-key-encryption-key-url": {
+      "reference": {
+        "keyVault": {
+          "id": "/subscriptions/fd0675e3-a4e3-46ea-931a-71764ea4deee/resourceGroups/azureInfraRGDev/providers/Microsoft.KeyVault/vaults/keyvault-danSBKV-12-Dev"
+        },
+        "secretName": "az-disk-key-kek-kid"
+        
+      }
+    },
+
+    "domainToJoin": {
+      "value": "sb.local"
+    },
+    "ouPath": {
+      "value": "OU=Servers; DC=sb; DC=local"
+    },
+    "domainUsername": {
+      "value": "danish@sb.local"
+    },
+
+    "domainPassword": {
+        "reference": {
+            "keyVault": {
+              "id": "/subscriptions/fd0675e3-a4e3-46ea-931a-71764ea4deee/resourceGroups/azureinfraRGDev/providers/Microsoft.KeyVault/vaults/keyvault-danSBKV-12-Dev"
+            },
+            "secretName": "domainadmin"
+          }
+      },
+    "domainJoinOptions": {
+      "value": 3
+    },
+    "vmAdminUsername": {
+      "value": "domainadmin"
+    },
+    "vmAdminPassword": {
+        "reference": {
+            "keyVault": {
+              "id": "/subscriptions/fd0675e3-a4e3-46ea-931a-71764ea4deee/resourceGroups/azureInfraRGDev/providers/Microsoft.KeyVault/vaults/keyvault-danSBKV-12-Dev"
+            },
+            "secretName": "vmadmin"
+          }
+      },
+    "disk-encryption-type": {
+      "value": "ADE"
+  },
+  "key-vault-name": {
+    "value": "keyvault-danSBKV-12-Dev"
+},
+"numberOfCAInstances": {
+  "value": 1
+},
+"numberOfMGMTInstances": {
+  "value": 1
+},
+
+    "location": {
+        "value": "West Europe"
+    }
+  }
+}
